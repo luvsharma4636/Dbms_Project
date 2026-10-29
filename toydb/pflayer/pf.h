@@ -38,3 +38,4 @@
 extern int PFerrno;		/* error number of last error */
 extern void PF_Init();
 extern void PF_PrintError();
+extern void PF_SetBufferSize(int size);

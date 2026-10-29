@@ -6,6 +6,15 @@ PFbufPrint() */
 #include "pftypes.h"
 
 static int PFnumbpage = 0;	/* # of buffer pages in memory */
+
+static int PFbufferSize = PF_MAX_BUFS;
+
+void PF_SetBufferSize(int size) {
+    if (size > 0 && PFnumbpage == 0) {
+        PFbufferSize = size;
+    }
+}
+
 static PFbpage *PFfirstbpage= NULL;	/* ptr to first buffer page, or NULL */
 static PFbpage *PFlastbpage = NULL;	/* ptr to last buffer page, or NULL */
 static PFbpage *PFfreebpage= NULL;	/* list of free buffer pages */
@@ -132,7 +141,7 @@ int error;		/* error value returned*/
 		*bpage = PFfreebpage;
 		PFfreebpage = (*bpage)->nextpage;
 	}
-	else if (PFnumbpage < PF_MAX_BUFS){
+	else if (PFnumbpage < PFbufferSize){
 		/* We have not reached max buffer limit, so
 		malloc() a new one */
 		if ((*bpage=(PFbpage *)malloc(sizeof(PFbpage)))==NULL){
