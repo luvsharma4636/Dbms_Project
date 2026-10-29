@@ -26,6 +26,8 @@ sense that it's <0 or >= # of pages in the file */
 
 extern char *malloc();
 
+extern void PF_SetReplacementPolicy();
+
 /****************** Internal Support Functions *****************************/
 static char *savestr(str)
 char *str;		/* string to be saved */
@@ -334,7 +336,25 @@ int fd; /* file descriptor */
 		return(PFerrno);
 	}
 
+	PF_SetReplacementPolicy(fd, PF_LRU);
+
 	return(fd);
+}
+
+int PF_OpenFileWithPolicy(char *fname, int policy) {
+    int fd;
+
+    if(policy != PF_LRU && policy != PF_MRU) {
+        return -1;
+    }
+
+    fd = PF_OpenFile(fname);
+
+    if(fd >= 0) {
+        PF_SetReplacementPolicy(fd, policy);
+    }
+
+    return fd;
 }
 
 PF_CloseFile(fd)
@@ -666,6 +686,20 @@ int error;
 
 	/* unfix this page */
 	return(PFbufUnfix(fd,pagenum,TRUE));
+}
+
+int PF_MarkDirty(int fd, int pagenum) {
+    if(PFinvalidFd(fd)) {
+        PFerrno = PFE_FD;
+        return PFerrno;
+    }
+
+    if(PFinvalidPagenum(fd, pagenum)) {
+        PFerrno = PFE_INVALIDPAGE;
+        return PFerrno;
+    }
+
+    return PFbufMarkDirty(fd, pagenum);
 }
 
 PF_UnfixPage(fd,pagenum,dirty)

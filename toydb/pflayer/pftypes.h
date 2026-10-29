@@ -78,3 +78,5 @@ extern PFbufGet();
 extern PFbufUnfix();
 extern PFbufalloc();
 extern PFbufReleaseFile();
+
+extern int PFbufMarkDirty();

@@ -34,8 +34,13 @@
 /* page size */
 #define PF_PAGE_SIZE	4096
 
+#define PF_LRU 0
+#define PF_MRU 1
+
 /* externs from the PF layer */
 extern int PFerrno;		/* error number of last error */
 extern void PF_Init();
 extern void PF_PrintError();
 extern void PF_SetBufferSize(int size);
+extern int PF_OpenFileWithPolicy();
+extern int PF_MarkDirty();

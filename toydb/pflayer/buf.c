@@ -15,6 +15,14 @@ void PF_SetBufferSize(int size) {
     }
 }
 
+static int PFreplacementPolicy[PF_FTAB_SIZE];
+
+void PF_SetReplacementPolicy(int fd, int policy) {
+    if(fd >= 0 && fd < PF_FTAB_SIZE) {
+        PFreplacementPolicy[fd] = policy;
+    }
+}
+
 static PFbpage *PFfirstbpage= NULL;	/* ptr to first buffer page, or NULL */
 static PFbpage *PFlastbpage = NULL;	/* ptr to last buffer page, or NULL */
 static PFbpage *PFfreebpage= NULL;	/* list of free buffer pages */
@@ -100,9 +108,10 @@ GLOBAL VARIABLES MODIFIED:
 }
 
 
-static PFbufInternalAlloc(bpage,writefcn)
+static PFbufInternalAlloc(bpage,writefcn,fd)
 PFbpage **bpage;	/* pointer to pointer to buffer bpage to be allocated*/
 int (*writefcn)();
+int fd;
 /****************************************************************************
 SPECIFICATIONS:
 	Allocate a buffer page and set *bpage to point to it. *bpage
@@ -159,10 +168,16 @@ int error;		/* error value returned*/
 
 		*bpage = NULL;		/* set initial return value */
 
-		for (tbpage=PFlastbpage;tbpage!=NULL;tbpage=tbpage->prevpage){
-			if (!tbpage->fixed)
-				/* found a page that can be swapped out */
-				break;
+		if(PFreplacementPolicy[fd] == PF_LRU) {
+			for(tbpage=PFlastbpage; tbpage!=NULL; tbpage=tbpage->prevpage) {
+				if(!tbpage->fixed)
+					break;
+			}
+		} else {
+			for(tbpage=PFfirstbpage; tbpage!=NULL; tbpage=tbpage->nextpage) {
+				if(!tbpage->fixed)
+					break;
+			}
 		}
 
 		if (tbpage == NULL){
@@ -236,7 +251,7 @@ int error;
 		/* page not in buffer. */
 		
 		/* allocate an empty page */
-		if ((error=PFbufInternalAlloc(&bpage,writefcn))!= PFE_OK){
+		if ((error=PFbufInternalAlloc(&bpage,writefcn,fd))!= PFE_OK){
 			/* error */
 			*fpage = NULL;
 			return(error);
@@ -278,6 +293,26 @@ int error;
 	bpage->fixed = TRUE;
 	*fpage = &bpage->fpage;
 	return(PFE_OK);
+}
+
+int PFbufMarkDirty(int fd, int pagenum) {
+    PFbpage *bpage;
+
+    bpage = PFhashFind(fd, pagenum);
+
+    if(bpage == NULL) {
+        PFerrno = PFE_PAGENOTINBUF;
+        return PFerrno;
+    }
+
+    if(!bpage->fixed) {
+        PFerrno = PFE_PAGEUNFIXED;
+        return PFerrno;
+    }
+
+    bpage->dirty = TRUE;
+
+    return PFE_OK;
 }
 
 PFbufUnfix(fd,pagenum,dirty)
@@ -357,7 +392,7 @@ int error;
 		return(PFerrno);
 	}
 
-	if ((error=PFbufInternalAlloc(&bpage,writefcn))!= PFE_OK)
+	if ((error=PFbufInternalAlloc(&bpage,writefcn,fd))!= PFE_OK)
 		/* can't get any buffer */
 		return(error);
 	
