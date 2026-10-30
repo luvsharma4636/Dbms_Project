@@ -27,6 +27,28 @@ static PFbpage *PFfirstbpage= NULL;	/* ptr to first buffer page, or NULL */
 static PFbpage *PFlastbpage = NULL;	/* ptr to last buffer page, or NULL */
 static PFbpage *PFfreebpage= NULL;	/* list of free buffer pages */
 
+PF_Stats PFstats = {0, 0, 0, 0, 0, 0};
+
+void PF_ResetStats() {
+    PFstats.logicalReads = 0;
+    PFstats.logicalWrites = 0;
+    PFstats.physicalReads = 0;
+    PFstats.physicalWrites = 0;
+    PFstats.bufferHits = 0;
+    PFstats.bufferMisses = 0;
+}
+
+void PF_PrintStats() {
+    printf("\nPF Layer Statistics:\n");
+
+    printf("Logical Reads   : %ld\n", PFstats.logicalReads);
+    printf("Logical Writes  : %ld\n", PFstats.logicalWrites);
+    printf("Physical Reads  : %ld\n", PFstats.physicalReads);
+    printf("Physical Writes : %ld\n", PFstats.physicalWrites);
+    printf("Buffer Hits     : %ld\n", PFstats.bufferHits);
+    printf("Buffer Misses   : %ld\n", PFstats.bufferMisses);
+}
+
 extern char *malloc();
 
 static void PFbufInsertFree(bpage)
@@ -246,10 +268,13 @@ GLOBAL VARIABLES MODIFIED:
 {
 PFbpage *bpage;	/* pointer to buffer */
 int error;
+PFstats.logicalReads++;
 
 	if ((bpage=PFhashFind(fd,pagenum)) == NULL){
 		/* page not in buffer. */
 		
+		PFstats.bufferMisses++;
+
 		/* allocate an empty page */
 		if ((error=PFbufInternalAlloc(&bpage,writefcn,fd))!= PFE_OK){
 			/* error */
@@ -281,12 +306,19 @@ int error;
 		bpage->page = pagenum;
 		bpage->dirty = FALSE;
 	}
-	else if (bpage->fixed){
-		/* page already in memory, and is fixed, so we can't
-		get it again. */
-		*fpage = &bpage->fpage;
-		PFerrno = PFE_PAGEFIXED;
-		return(PFerrno);
+
+	else {
+		PFstats.bufferHits++;
+
+		if(bpage->fixed) {
+
+			/* page already in memory, and is fixed, so we can't
+			get it again. */
+
+			*fpage = &bpage->fpage;
+			PFerrno = PFE_PAGEFIXED;
+			return PFerrno;
+		}
 	}
 
 	/* Fix the page in the buffer then return*/
@@ -311,6 +343,7 @@ int PFbufMarkDirty(int fd, int pagenum) {
     }
 
     bpage->dirty = TRUE;
+	PFstats.logicalWrites++;
 
     return PFE_OK;
 }
@@ -347,10 +380,12 @@ PFbpage *bpage;
 		return(PFerrno);
 	}
 
-	if (dirty)
+	if (dirty) {
 		/* mark this page dirty */
+		PFstats.logicalWrites++;
 		bpage->dirty = TRUE;
-	
+	}
+
 	/* unfix the page */
 	bpage->fixed = FALSE;
 	

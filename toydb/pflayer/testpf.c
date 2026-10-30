@@ -6,7 +6,7 @@
 #define FILE1	"file1"
 #define FILE2	"file2"
 
-main()
+int main()
 {
 int error;
 int i;
@@ -293,6 +293,9 @@ int fd1,fd2;
 	/* print the hash table */
 	printf("hash table:\n");
 	PFhashPrint();
+
+	return 0;
+	
 }
 
 

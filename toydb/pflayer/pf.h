@@ -44,3 +44,17 @@ extern void PF_PrintError();
 extern void PF_SetBufferSize(int size);
 extern int PF_OpenFileWithPolicy();
 extern int PF_MarkDirty();
+
+typedef struct {
+    long logicalReads;
+    long logicalWrites;
+    long physicalReads;
+    long physicalWrites;
+    long bufferHits;
+    long bufferMisses;
+} PF_Stats;
+
+extern PF_Stats PFstats;
+
+extern void PF_ResetStats();
+extern void PF_PrintStats();

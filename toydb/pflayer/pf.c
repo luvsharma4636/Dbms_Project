@@ -125,6 +125,8 @@ int error;
 		return(PFerrno);
 	}
 
+	PFstats.physicalReads++;
+
 	return(PFE_OK);
 }
 
@@ -162,6 +164,8 @@ int error;
 		else	PFerrno = PFE_INCOMPLETEWRITE;
 		return(PFerrno);
 	}
+
+	PFstats.physicalWrites++;
 
 	return(PFE_OK);
 
