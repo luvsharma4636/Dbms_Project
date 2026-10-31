@@ -69,8 +69,22 @@ int slotted_insert_record(char *page,
     available_space = header.free_end - header.free_start;
 
     /* Check whether enough contiguous space exists */
+    if (required_space > available_space) {
+
+    /* Try to recover fragmented free space */
+    if (slotted_compact_page(page) != 0)
+        return -1;
+
+    /* Read the updated header after compaction */
+    memcpy(&header, page, sizeof(PageHeader));
+
+    /* Recalculate available space */
+    available_space = header.free_end - header.free_start;
+
+    /* Check again */
     if (required_space > available_space)
         return -1;
+}
 
     /* Allocate record storage from the end of the page */
     new_offset = header.free_end - record_len;
@@ -132,6 +146,80 @@ int slotted_delete_record(char *page, int slot_no)
 
     /* Write the updated slot back */
     memcpy(page + slot_pos, &slot, sizeof(Slot));
+
+    return 0;
+}
+
+int slotted_compact_page(char *page)
+{
+    char old_page[SLOTTED_PAGE_SIZE];
+
+    PageHeader header;
+    PageHeader old_header;
+    Slot slot;
+
+    int i;
+    int old_slot_pos;
+    int new_slot_pos;
+    int new_offset;
+
+    if (page == NULL)
+        return -1;
+
+    /*
+     * Preserve the original page.
+     * We need the original record locations while rebuilding.
+     */
+    memcpy(old_page, page, SLOTTED_PAGE_SIZE);
+
+    memcpy(&old_header, old_page, sizeof(PageHeader));
+
+    /* Start rebuilding the page */
+    memset(page, 0, SLOTTED_PAGE_SIZE);
+
+    header.slot_count = old_header.slot_count;
+    header.free_start = old_header.free_start;
+    header.free_end = SLOTTED_PAGE_SIZE;
+
+    /*
+     * Process every existing slot.
+     * Deleted slots remain deleted.
+     */
+    for (i = 0; i < old_header.slot_count; i++) {
+
+        old_slot_pos = sizeof(PageHeader) + i * sizeof(Slot);
+
+        memcpy(&slot,
+               old_page + old_slot_pos,
+               sizeof(Slot));
+
+        /* Skip deleted slots */
+        if (slot.length == 0) {
+            memcpy(page + old_slot_pos, &slot, sizeof(Slot));
+            continue;
+        }
+
+        /* Allocate space for this valid record */
+        new_offset = header.free_end - slot.length;
+
+        /* Copy record from its original location */
+        memcpy(page + new_offset,
+               old_page + slot.offset,
+               slot.length);
+
+        /* Update the slot's offset */
+        slot.offset = new_offset;
+
+        new_slot_pos = sizeof(PageHeader) + i * sizeof(Slot);
+
+        memcpy(page + new_slot_pos, &slot, sizeof(Slot));
+
+        /* Move the free-space boundary */
+        header.free_end = new_offset;
+    }
+
+    /* Write the updated header */
+    memcpy(page, &header, sizeof(PageHeader));
 
     return 0;
 }

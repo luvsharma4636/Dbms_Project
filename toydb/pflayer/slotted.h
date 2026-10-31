@@ -27,4 +27,5 @@ int slotted_insert_record(char *page,
 
 int slotted_delete_record(char *page, int slot_no);
 
+int slotted_compact_page(char *page);
 #endif
