@@ -25,4 +25,6 @@ int slotted_insert_record(char *page,
                           const char *record,
                           uint16_t record_len);
 
+int slotted_delete_record(char *page, int slot_no);
+
 #endif

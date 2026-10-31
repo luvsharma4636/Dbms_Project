@@ -100,3 +100,38 @@ int slotted_insert_record(char *page,
 
     return slot_no;
 }
+
+int slotted_delete_record(char *page, int slot_no)
+{
+    PageHeader header;
+    Slot slot;
+    int slot_pos;
+
+    if (page == NULL)
+        return -1;
+
+    /* Read the page header */
+    memcpy(&header, page, sizeof(PageHeader));
+
+    /* Validate the slot number */
+    if (slot_no < 0 || slot_no >= header.slot_count)
+        return -1;
+
+    /* Locate the slot entry */
+    slot_pos = sizeof(PageHeader) + slot_no * sizeof(Slot);
+
+    memcpy(&slot, page + slot_pos, sizeof(Slot));
+
+    /* Check whether the record is already deleted */
+    if (slot.length == 0)
+        return -1;
+
+    /* Mark the slot as deleted */
+    slot.offset = 0;
+    slot.length = 0;
+
+    /* Write the updated slot back */
+    memcpy(page + slot_pos, &slot, sizeof(Slot));
+
+    return 0;
+}
