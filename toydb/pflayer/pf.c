@@ -11,6 +11,10 @@
 #define L_SET 0
 #endif
 
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 int PFerrno = PFE_OK;	/* last error message */
 
 static PFftab_ele PFftab[PF_FTAB_SIZE]; /* table of opened files */
@@ -217,7 +221,7 @@ PFhdr_str hdr;	/* file header */
 int error;
 
 	/* create file for exclusive use */
-	if ((fd=open(fname,O_CREAT|O_EXCL|O_WRONLY,0664))<0){
+	if ((fd=open(fname, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, 0664))<0){
 		/* unix error on open */
 		PFerrno = PFE_UNIX;
 		return(PFE_UNIX);
@@ -312,7 +316,7 @@ int fd; /* file descriptor */
 	}
 
 	/* open the file */
-	if ((PFftab[fd].unixfd = open(fname,O_RDWR))< 0){
+	if ((PFftab[fd].unixfd = open(fname, O_RDWR | O_BINARY))< 0){
 		/* can't open the file */
 		PFerrno = PFE_UNIX;
 		return(PFerrno);

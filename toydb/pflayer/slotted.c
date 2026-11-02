@@ -236,8 +236,9 @@ int slotted_get_next_record(
     int slot_pos;
 
     if (page == NULL || current_slot == NULL ||
-        record == NULL || record_len == NULL)
-        return -1;
+    record == NULL || record_len == NULL ||
+    *current_slot < 0)
+    return -1;
 
     memcpy(&header, page, sizeof(PageHeader));
 
@@ -256,7 +257,13 @@ int slotted_get_next_record(
             continue;
 
         /* Check output buffer capacity */
+        /* Check output buffer capacity */
         if (slot.length > record_capacity)
+            return -1;
+
+        /* Validate record boundaries */
+        if (slot.offset < header.free_end ||
+            slot.offset > SLOTTED_PAGE_SIZE - slot.length)
             return -1;
 
         /* Copy the record into the output buffer */
