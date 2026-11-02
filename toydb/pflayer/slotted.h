@@ -28,4 +28,18 @@ int slotted_insert_record(char *page,
 int slotted_delete_record(char *page, int slot_no);
 
 int slotted_compact_page(char *page);
+
+/*
+ * Returns:
+ *  1  = A record was successfully retrieved
+ *  0  = No more records
+ * -1  = Invalid input or insufficient output buffer
+ */
+int slotted_get_next_record(
+    char *page,
+    int *current_slot,
+    char *record,
+    uint16_t record_capacity,
+    uint16_t *record_len
+);
 #endif

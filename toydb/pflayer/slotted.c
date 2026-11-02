@@ -223,3 +223,50 @@ int slotted_compact_page(char *page)
 
     return 0;
 }
+
+int slotted_get_next_record(
+    char *page,
+    int *current_slot,
+    char *record,
+    uint16_t record_capacity,
+    uint16_t *record_len)
+{
+    PageHeader header;
+    Slot slot;
+    int slot_pos;
+
+    if (page == NULL || current_slot == NULL ||
+        record == NULL || record_len == NULL)
+        return -1;
+
+    memcpy(&header, page, sizeof(PageHeader));
+
+    while (*current_slot < header.slot_count) {
+
+        slot_pos = sizeof(PageHeader) +
+                   (*current_slot) * sizeof(Slot);
+
+        memcpy(&slot, page + slot_pos, sizeof(Slot));
+
+        /* Move the scan position forward */
+        (*current_slot)++;
+
+        /* Skip deleted slots */
+        if (slot.length == 0)
+            continue;
+
+        /* Check output buffer capacity */
+        if (slot.length > record_capacity)
+            return -1;
+
+        /* Copy the record into the output buffer */
+        memcpy(record, page + slot.offset, slot.length);
+
+        *record_len = slot.length;
+
+        return 1;
+    }
+
+    /* All slots have been examined */
+    return 0;
+}
