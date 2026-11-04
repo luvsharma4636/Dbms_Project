@@ -3,6 +3,7 @@
 #include "../pflayer/pf.h"
 #include "../pflayer/slotted.h"
 #include "am.h"
+#include <time.h>
 
 extern int PF_CreateFile(char *fname);
 extern int PF_OpenFile(char *fname);
@@ -43,6 +44,18 @@ int main(int argc, char *argv[]) {
     int slotPos;
     PageHeader header;
     Slot slotInfo;
+    clock_t startTime;
+    clock_t endTime;
+    double buildTime;
+    clock_t queryStart;
+    clock_t queryEnd;
+    double queryTime;
+    clock_t totalStart;
+    clock_t totalEnd;
+    double totalTime;
+    PF_Stats loadingStats;
+    PF_Stats indexStats;
+    PF_Stats totalStats;
 
     if(argc < 2) {
         printf("Usage: ./student_index <student_file>\n");
@@ -50,6 +63,9 @@ int main(int argc, char *argv[]) {
     }
 
     PF_Init();
+
+    PF_ResetStats();
+    totalStart = clock();
 
     fp = fopen(argv[1], "r");
 
@@ -155,6 +171,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Save statistics for loading Student records
+    loadingStats = PFstats;
+
+    // Reset statistics for index construction
+    PF_ResetStats();
+    startTime = clock();
     // Read the first page
     result = PF_GetFirstPage(fd, &pageNum, &page);
 
@@ -220,6 +242,52 @@ int main(int argc, char *argv[]) {
 
     printf("Total records indexed: %d\n", indexCount);
 
+    // Close index to flush remaining dirty pages
+    result = PF_CloseFile(indexFd);
+
+    if(result != PFE_OK) {
+        printf("Error closing Student index: %d\n", result);
+        return 1;
+    }
+
+    endTime = clock();
+    buildTime = (double)(endTime-startTime)/CLOCKS_PER_SEC;
+
+    // Save index construction statistics
+    indexStats = PFstats;
+
+    // Combine loading and indexing statistics
+    totalStats.logicalReads = loadingStats.logicalReads + indexStats.logicalReads;
+    totalStats.logicalWrites = loadingStats.logicalWrites + indexStats.logicalWrites;
+    totalStats.physicalReads = loadingStats.physicalReads + indexStats.physicalReads;
+    totalStats.physicalWrites = loadingStats.physicalWrites + indexStats.physicalWrites;
+    totalStats.bufferHits = loadingStats.bufferHits + indexStats.bufferHits;
+    totalStats.bufferMisses = loadingStats.bufferMisses + indexStats.bufferMisses;
+
+    printf("\nMethod 1 - Index Construction\n");
+    printf("Time: %.6f seconds\n", buildTime);
+    PF_PrintStats();
+
+    totalEnd = clock();
+    totalTime = (double)(totalEnd-totalStart)/CLOCKS_PER_SEC;
+
+    printf("\nMethod 1 - Complete Construction Workflow\n");
+    printf("Total time: %.6f seconds\n", totalTime);
+    printf("Logical Reads: %ld\n", totalStats.logicalReads);
+    printf("Logical Writes: %ld\n", totalStats.logicalWrites);
+    printf("Physical Reads: %ld\n", totalStats.physicalReads);
+    printf("Physical Writes: %ld\n", totalStats.physicalWrites);
+    printf("Buffer Hits: %ld\n", totalStats.bufferHits);
+    printf("Buffer Misses: %ld\n", totalStats.bufferMisses);
+
+    // Reopen index for query testing
+    indexFd = PF_OpenFile("student_records.dat.0");
+
+    if(indexFd < 0) {
+        printf("Cannot reopen Student index\n");
+        return 1;
+    }
+
     // Scan all records from the B+ tree index
     scanFd = AM_OpenIndexScan(indexFd, 'c', 8, EQUAL, NULL);
 
@@ -248,6 +316,8 @@ int main(int argc, char *argv[]) {
     printf("Records retrieved from index: %d\n", scanCount);
 
     // Search for one particular roll number
+    PF_ResetStats();
+    queryStart = clock();
     scanFd = AM_OpenIndexScan(indexFd, 'c', 8, EQUAL, searchRoll);
 
     if(scanFd < 0) {
@@ -311,6 +381,12 @@ int main(int argc, char *argv[]) {
     }
 
     AM_CloseIndexScan(scanFd);
+    queryEnd = clock();
+    queryTime = (double)(queryEnd-queryStart)/CLOCKS_PER_SEC;
+
+    printf("\nMethod 1 - Query Performance\n");
+    printf("Query time: %.6f seconds\n", queryTime);
+    PF_PrintStats();
 
     PF_CloseFile(indexFd);
 

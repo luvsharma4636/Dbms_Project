@@ -3,6 +3,7 @@
 #include "../pflayer/pf.h"
 #include "../pflayer/slotted.h"
 #include "am.h"
+#include <time.h>
 
 extern int PF_CreateFile(char *fname);
 extern int PF_OpenFile(char *fname);
@@ -83,6 +84,17 @@ int main(int argc, char *argv[]) {
     int missingIds = 0;
     int invalidIds = 0;
     int expectedId;
+    clock_t startTime;
+    clock_t endTime;
+    double buildTime;
+    clock_t queryStart;
+    clock_t queryEnd;
+    double queryTime;
+    clock_t totalStart;
+    clock_t totalEnd;
+    double totalTime;
+    PF_Stats loadingStats;
+    PF_Stats bulkStats;
 
     if(argc < 2) {
         printf("Usage: ./student_index <student_file>\n");
@@ -90,6 +102,9 @@ int main(int argc, char *argv[]) {
     }
 
     PF_Init();
+
+    PF_ResetStats();
+    totalStart = clock();
 
     fp = fopen(argv[1], "r");
 
@@ -271,6 +286,10 @@ int main(int argc, char *argv[]) {
     }
 
     // Build B+ tree using bulk loading
+    loadingStats = PFstats;
+
+    PF_ResetStats();
+    startTime = clock();
     result = AM_BulkLoad(indexFd, 'c', 8,
                         (char *)sortedKeys, sortedIds, indexCount);
 
@@ -281,6 +300,51 @@ int main(int argc, char *argv[]) {
 
     printf("Total records bulk loaded: %d\n", indexCount);
 
+    // Close index to save all remaining dirty pages
+    result = PF_CloseFile(indexFd);
+
+    if(result != PFE_OK) {
+        printf("Error closing Student index: %d\n", result);
+        return 1;
+    }
+
+    // Stop measuring after closing the index
+    endTime = clock();
+    buildTime = (double)(endTime-startTime)/CLOCKS_PER_SEC;
+
+    bulkStats = PFstats;
+
+    totalEnd = clock();
+    totalTime = (double)(totalEnd-totalStart)/CLOCKS_PER_SEC;
+
+    // Bulk loading performance
+    printf("\nMethod 3 - Bulk Index Construction\n");
+    printf("Time including index close: %.6f seconds\n", buildTime);
+    PF_PrintStats();
+
+    // Complete workflow performance
+    printf("\nMethod 3 - Complete Construction Workflow\n");
+    printf("Total time: %.6f seconds\n", totalTime);
+
+    printf("Logical Reads: %ld\n",loadingStats.logicalReads + bulkStats.logicalReads);
+
+    printf("Logical Writes: %ld\n",loadingStats.logicalWrites + bulkStats.logicalWrites);
+
+    printf("Physical Reads: %ld\n",loadingStats.physicalReads + bulkStats.physicalReads);
+
+    printf("Physical Writes: %ld\n",loadingStats.physicalWrites + bulkStats.physicalWrites);
+
+    printf("Buffer Hits: %ld\n",loadingStats.bufferHits + bulkStats.bufferHits);
+
+    printf("Buffer Misses: %ld\n",loadingStats.bufferMisses + bulkStats.bufferMisses);
+
+    // Reopen the index for query testing
+    indexFd = PF_OpenFile("student_bulk.dat.0");
+
+    if(indexFd < 0) {
+        printf("Cannot reopen Student index\n");
+        return 1;
+    }
     // Scan all records from the B+ tree index
     scanFd = AM_OpenIndexScan(indexFd, 'c', 8, EQUAL, NULL);
 
@@ -342,6 +406,8 @@ int main(int argc, char *argv[]) {
 
 
     // Search for one particular roll number
+    PF_ResetStats();
+    queryStart = clock();
     scanFd = AM_OpenIndexScan(indexFd, 'c', 8, EQUAL, searchRoll);
 
     if(scanFd < 0) {
@@ -405,6 +471,12 @@ int main(int argc, char *argv[]) {
     }
 
     AM_CloseIndexScan(scanFd);
+    queryEnd = clock();
+    queryTime = (double)(queryEnd-queryStart)/CLOCKS_PER_SEC;
+
+    printf("\nMethod 3 - Query Performance\n");
+    printf("Query time: %.6f seconds\n", queryTime);
+    PF_PrintStats();
 
     // Check duplicate roll numbers
     char duplicateRoll[8] = "97305818";
@@ -436,7 +508,12 @@ int main(int argc, char *argv[]) {
 
     printf("Records found for duplicate roll number: %d\n", duplicateCount);
 
-    PF_CloseFile(indexFd);
+    result = PF_CloseFile(indexFd);
+
+    if(result != PFE_OK) {
+        printf("Error closing Student index: %d\n", result);
+        return 1;
+    }
 
     printf("Total Student records inserted: %d\n", count);
 
