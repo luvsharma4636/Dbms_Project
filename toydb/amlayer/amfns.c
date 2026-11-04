@@ -1,8 +1,9 @@
 # include <stdio.h>
 # include "pf.h"
 # include "am.h"
+#include <string.h>
 
-
+extern void free(void *ptr);
 
 /* Creates a secondary idex file called fileName.indexNo */
 AM_CreateIndex(fileName,indexNo,attrType,attrLength)
@@ -383,3 +384,453 @@ char *s;
      fprintf(stderr,"\n");
 }
 
+/* Initialize a leaf page for bulk loading */
+void AM_BulkInitLeaf(char *page, int attrLength) {
+    AM_LEAFHEADER header;
+    int maxKeys;
+
+    maxKeys = (PF_PAGE_SIZE - AM_sint - AM_si)/(AM_si + attrLength);
+
+    if(maxKeys%2 != 0) {
+        maxKeys--;
+    }
+
+    header.pageType = 'l';
+    header.nextLeafPage = AM_NULL_PAGE;
+    header.recIdPtr = PF_PAGE_SIZE;
+    header.keyPtr = AM_sl;
+    header.freeListPtr = AM_NULL;
+    header.numinfreeList = 0;
+    header.attrLength = attrLength;
+    header.numKeys = 0;
+    header.maxKeys = maxKeys;
+
+    memcpy(page, &header, AM_sl);
+}
+
+/* Insert a sorted key directly into a leaf page */
+int AM_BulkInsertLeaf(char *page, int attrLength,
+                      char *key, int recId) {
+    AM_LEAFHEADER header;
+    int index;
+    int status;
+    int result;
+    char *lastKey;
+
+    memcpy(&header, page, AM_sl);
+
+    index = header.numKeys + 1;
+    status = AM_NOT_FOUND;
+
+    // Check if the key already exists
+    if(header.numKeys > 0) {
+        lastKey = page + AM_sl +
+                  (header.numKeys-1)*(attrLength + AM_ss);
+
+        if(memcmp(lastKey, key, attrLength) == 0) {
+            index = header.numKeys;
+            status = AM_FOUND;
+        } else if(memcmp(lastKey, key, attrLength) > 0) {
+            return -1;
+        }
+    }
+
+    // Insert directly without searching the B+ tree
+    result = AM_InsertintoLeaf(page, attrLength,
+                               key, recId, index, status);
+
+    return result;
+}
+
+/* Connect one leaf page to the next */
+int AM_BulkLinkLeaf(int fileDesc, int pageNum, int nextPageNum) {
+    char *page;
+    AM_LEAFHEADER header;
+    int result;
+
+    result = PF_GetThisPage(fileDesc, pageNum, &page);
+
+    if(result != PFE_OK) {
+        return -1;
+    }
+
+    memcpy(&header, page, AM_sl);
+
+    header.nextLeafPage = nextPageNum;
+
+    memcpy(page, &header, AM_sl);
+
+    result = PF_UnfixPage(fileDesc, pageNum, TRUE);
+
+    if(result != PFE_OK) {
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Build leaf pages using sorted roll numbers */
+int AM_BulkBuildLeaves(int fileDesc, int attrLength,
+                       char *keys, int *recIds, int count,
+                       int *leafPages, char *firstKeys) {
+    char *page;
+    char *newPage;
+    int pageNum;
+    int newPageNum;
+    int leafCount = 0;
+    int result;
+	int i;
+
+    if(count <= 0) {
+        return -1;
+    }
+
+    // Allocate the first leaf
+    result = PF_AllocPage(fileDesc, &pageNum, &page);
+
+    if(result != PFE_OK) {
+        return -1;
+    }
+
+    AM_BulkInitLeaf(page, attrLength);
+
+    leafPages[0] = pageNum;
+    memcpy(firstKeys, keys, attrLength);
+    leafCount++;
+
+    for(i=0; i<count; i++) {
+        result = AM_BulkInsertLeaf(page, attrLength,
+                                   keys + i*attrLength, recIds[i]);
+
+        if(result == TRUE) {
+            continue;
+        }
+
+        if(result != FALSE) {
+            PF_UnfixPage(fileDesc, pageNum, TRUE);
+            return -1;
+        }
+
+        // Current leaf is full
+        result = PF_UnfixPage(fileDesc, pageNum, TRUE);
+
+        if(result != PFE_OK) {
+            return -1;
+        }
+
+        // Allocate the next leaf
+        result = PF_AllocPage(fileDesc, &newPageNum, &newPage);
+
+        if(result != PFE_OK) {
+            return -1;
+        }
+
+        AM_BulkInitLeaf(newPage, attrLength);
+
+        // Save the new leaf
+        result = PF_UnfixPage(fileDesc, newPageNum, TRUE);
+
+        if(result != PFE_OK) {
+            return -1;
+        }
+
+        // Connect the previous leaf to the new leaf
+        result = AM_BulkLinkLeaf(fileDesc, pageNum, newPageNum);
+
+        if(result != 0) {
+            return -1;
+        }
+
+        pageNum = newPageNum;
+
+        // Open the new leaf for insertion
+        result = PF_GetThisPage(fileDesc, pageNum, &page);
+
+        if(result != PFE_OK) {
+            return -1;
+        }
+
+        leafPages[leafCount] = pageNum;
+
+        memcpy(firstKeys + leafCount*attrLength,
+               keys + i*attrLength, attrLength);
+
+        leafCount++;
+
+        // Insert the key that could not fit
+        result = AM_BulkInsertLeaf(page, attrLength,
+                                   keys + i*attrLength, recIds[i]);
+
+        if(result != TRUE) {
+            PF_UnfixPage(fileDesc, pageNum, TRUE);
+            return -1;
+        }
+    }
+
+    result = PF_UnfixPage(fileDesc, pageNum, TRUE);
+
+    if(result != PFE_OK) {
+        return -1;
+    }
+
+    return leafCount;
+}
+/* Fill an internal node using sorted child pages */
+int AM_BulkFillInternal(char *page, int attrLength,
+                        int *childPages, char *childKeys,
+                        int childCount) {
+    AM_INTHEADER header;
+    int maxKeys;
+    int pos;
+    int i;
+
+    maxKeys = (PF_PAGE_SIZE - AM_sint - AM_si)/(AM_si + attrLength);
+
+    if(maxKeys%2 != 0) {
+        maxKeys--;
+    }
+
+    if(childCount < 2 || childCount > maxKeys+1) {
+        return -1;
+    }
+
+    header.pageType = 'i';
+    header.numKeys = childCount-1;
+    header.maxKeys = maxKeys;
+    header.attrLength = attrLength;
+
+    memcpy(page, &header, AM_sint);
+
+    pos = AM_sint;
+
+    // Store the leftmost child
+    memcpy(page + pos, &childPages[0], AM_si);
+    pos += AM_si;
+
+    // Store separator keys and remaining children
+    for(i=1; i<childCount; i++) {
+        memcpy(page + pos, childKeys + i*attrLength, attrLength);
+        pos += attrLength;
+
+        memcpy(page + pos, &childPages[i], AM_si);
+        pos += AM_si;
+    }
+
+    return 0;
+}
+
+/* Build one level of internal nodes */
+int AM_BulkBuildLevel(int fileDesc, int attrLength,
+                      int *childPages, char *childKeys, int childCount,
+                      int *parentPages, char *parentKeys) {
+    int maxKeys;
+    int maxChildren;
+    int parentCount;
+    int groupSize;
+    int extra;
+    int start = 0;
+    int pageNum;
+    int result;
+    int i;
+    char *page;
+
+    maxKeys = (PF_PAGE_SIZE - AM_sint - AM_si)/(AM_si + attrLength);
+
+    if(maxKeys%2 != 0) {
+        maxKeys--;
+    }
+
+    maxChildren = maxKeys + 1;
+
+    // Calculate number of parent pages needed
+    parentCount = (childCount + maxChildren-1)/maxChildren;
+
+    groupSize = childCount/parentCount;
+    extra = childCount%parentCount;
+
+    for(i=0; i<parentCount; i++) {
+        int currentSize = groupSize;
+
+        if(i < extra) {
+            currentSize++;
+        }
+
+        // Allocate a new internal page
+        result = PF_AllocPage(fileDesc, &pageNum, &page);
+
+        if(result != PFE_OK) {
+            return -1;
+        }
+
+        // Fill the internal page
+        result = AM_BulkFillInternal(page, attrLength,
+                                     childPages + start,
+                                     childKeys + start*attrLength,
+                                     currentSize);
+
+        if(result != 0) {
+            PF_UnfixPage(fileDesc, pageNum, FALSE);
+            return -1;
+        }
+
+        // Store parent page number
+        parentPages[i] = pageNum;
+
+        // Store the smallest key in this subtree
+        memcpy(parentKeys + i*attrLength,
+               childKeys + start*attrLength, attrLength);
+
+        result = PF_UnfixPage(fileDesc, pageNum, TRUE);
+
+        if(result != PFE_OK) {
+            return -1;
+        }
+
+        start += currentSize;
+    }
+
+    return parentCount;
+}
+
+/* Build a B+ tree index using sorted records */
+int AM_BulkLoad(int fileDesc, char attrType, int attrLength,
+                char *keys, int *recIds, int count) {
+    int *childPages;
+    int *parentPages;
+    char *childKeys;
+    char *parentKeys;
+    char *page;
+    char *rootPage;
+
+    int pageNum;
+    int childCount;
+    int parentCount;
+    int rootNum;
+    int result;
+    int i;
+    int status = -1;
+
+    AM_LEAFHEADER header;
+
+    if(fileDesc < 0 || attrType != 'c' || attrLength < 1 ||
+       attrLength > 255 || count <= 0 ||
+       keys == NULL || recIds == NULL) {
+        return -1;
+    }
+
+    // Check that the index is empty
+    result = PF_GetThisPage(fileDesc, 0, &page);
+
+    if(result != PFE_OK) {
+        return -1;
+    }
+
+    memcpy(&header, page, AM_sl);
+
+    result = PF_UnfixPage(fileDesc, 0, FALSE);
+
+    if(result != PFE_OK) {
+        return -1;
+    }
+
+    if(header.pageType != 'l' || header.numKeys != 0) {
+        return -1;
+    }
+
+    childPages = malloc(count*sizeof(int));
+    parentPages = malloc(count*sizeof(int));
+    childKeys = malloc(count*attrLength);
+    parentKeys = malloc(count*attrLength);
+
+    if(childPages == NULL || parentPages == NULL ||
+       childKeys == NULL || parentKeys == NULL) {
+        goto cleanup;
+    }
+
+    // Reserve page 1
+    result = PF_AllocPage(fileDesc, &pageNum, &page);
+
+    if(result != PFE_OK) {
+        goto cleanup;
+    }
+
+    result = PF_UnfixPage(fileDesc, pageNum, FALSE);
+
+    if(result != PFE_OK || pageNum != 1) {
+        goto cleanup;
+    }
+
+    // Build leaf pages starting from page 2
+    childCount = AM_BulkBuildLeaves(fileDesc, attrLength,
+                                    keys, recIds, count,
+                                    childPages, childKeys);
+
+    if(childCount <= 0) {
+        goto cleanup;
+    }
+
+    // Build internal levels bottom-up
+    while(childCount > 1) {
+        parentCount = AM_BulkBuildLevel(fileDesc, attrLength,
+                                        childPages, childKeys,
+                                        childCount,
+                                        parentPages, parentKeys);
+
+        if(parentCount <= 0) {
+            goto cleanup;
+        }
+
+        childCount = parentCount;
+
+        for(i=0; i<childCount; i++) {
+            childPages[i] = parentPages[i];
+
+            memcpy(childKeys + i*attrLength,
+                   parentKeys + i*attrLength,
+                   attrLength);
+        }
+    }
+
+    // Copy the final root into page 0
+    rootNum = childPages[0];
+
+    result = PF_GetThisPage(fileDesc, rootNum, &rootPage);
+
+    if(result != PFE_OK) {
+        goto cleanup;
+    }
+
+    result = PF_GetThisPage(fileDesc, 0, &page);
+
+    if(result != PFE_OK) {
+        PF_UnfixPage(fileDesc, rootNum, FALSE);
+        goto cleanup;
+    }
+
+    memcpy(page, rootPage, PF_PAGE_SIZE);
+
+    result = PF_UnfixPage(fileDesc, rootNum, FALSE);
+
+    if(result != PFE_OK) {
+        PF_UnfixPage(fileDesc, 0, TRUE);
+        goto cleanup;
+    }
+
+    result = PF_UnfixPage(fileDesc, 0, TRUE);
+
+    if(result != PFE_OK) {
+        goto cleanup;
+    }
+
+    AM_RootPageNum = 0;
+
+    status = 0;
+
+cleanup:
+    free(childPages);
+    free(parentPages);
+    free(childKeys);
+    free(parentKeys);
+
+    return status;
+}

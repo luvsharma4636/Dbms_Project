@@ -66,3 +66,6 @@ extern char *malloc();
 # define AME_INVALIDATTRTYPE -9
 # define AME_FD -10
 # define AME_INVALIDVALUE -11
+
+/* Build B+ tree index from sorted records */
+int AM_BulkLoad(int fileDesc, char attrType, int attrLength,char *keys, int *recIds, int count);
